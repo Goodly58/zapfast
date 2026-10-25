@@ -4,7 +4,10 @@
 
 - **Read ticks always show**, even with your account's read receipts off.
 - **Deleted messages stay.** Messages others delete for everyone are kept and marked *deleted*.
+- **Edits keep their history.** Hover *edited* on someone's message to see what it said before.
 - **Screen privacy.** Covers chats, messages, media, names and avatars until hovered (Ctrl+Shift+H, off by default). By [paulo1403](https://github.com/paulo1403) ([crmne/zapfast#451](https://github.com/crmne/zapfast/pull/451)), via [ZapFaster](https://github.com/eternalwaitt/zap-faster).
+- **Ghost mode.** Never shows you as online (Settings → Privacy, off by default).
+- **Scheduled messages.** Right-click Send to send later. Waiting messages sit above the composer until they go.
 - **Updates come from this repository**, so they keep these changes.
 
 <p align="center">
@@ -12,7 +15,14 @@
   <img src="docs/deleted.png" width="49%" alt="A message deleted for everyone stays, marked deleted">
 </p>
 <p align="center">
+  <img src="docs/edits.png" width="49%" alt="Hovering edited shows what the message said before">
   <img src="docs/privacy.png" width="49%" alt="Screen privacy covers the chat list until you hover a row">
+</p>
+<p align="center">
+  <img src="docs/ghost.png" width="49%" alt="With ghost mode on, others see your last seen instead of online">
+  <img src="docs/scheduled.png" width="49%" alt="Right-click Send to schedule a message for later">
+</p>
+<p align="center">
   <img src="docs/updates.png" width="49%" alt="Each upstream release is patched and offered as an update">
 </p>
 

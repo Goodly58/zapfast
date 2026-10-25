@@ -170,10 +170,79 @@
   .chip.accent .dot { background: #3fd6b0; box-shadow: 0 0 8px #3fd6b0; }
   .patch { display: flex; align-items: center; gap: 9px; font-size: 13.5px; color: var(--text); }
   .patch svg { width: 15px; height: 15px; flex: none; }
+  .patch.more { color: var(--dim); padding-left: 24px; font-size: 13px; }
   .link { display: grid; place-items: center; }
   .link svg { width: 40px; height: 14px; }
   .icon { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; }
   .icon svg { width: 18px; height: 18px; }
+
+  #edits-card { --glow: rgba(255, 196, 92, 0.24); --glow-2: rgba(241, 92, 109, 0.09); }
+  #ghost-card { --glow: rgba(148, 170, 196, 0.26); --glow-2: rgba(139, 124, 246, 0.10); }
+  #scheduled-card { --glow: rgba(98, 140, 255, 0.26); --glow-2: rgba(0, 168, 132, 0.11); }
+
+  /* Edit history */
+  .stage-center { flex: 1; display: grid; place-items: center; }
+  .edit-demo { position: relative; padding-top: 86px; }
+  .tip {
+    position: absolute; top: 0; right: -22px; width: 250px;
+    padding: 12px 14px; border-radius: 12px;
+    background: #2a3942; border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 16px 36px -14px rgba(0, 0, 0, 0.75);
+  }
+  .tip::after {
+    content: ""; position: absolute; bottom: -7px; right: 72px; width: 14px; height: 14px;
+    background: #2a3942; transform: rotate(45deg);
+    border-right: 1px solid rgba(255, 255, 255, 0.08); border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .tip .k { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: #ffc45c; }
+  .tip .v { margin-top: 5px; font-size: 15px; color: var(--text); }
+  .edited-mark { color: var(--secondary); text-decoration: underline dotted rgba(233, 237, 239, 0.5); text-underline-offset: 3px; }
+
+  /* Ghost mode */
+  .switch.on { background: var(--accent); }
+  .switch.on::after { left: auto; right: 3px; background: #fff; }
+  .presence {
+    display: inline-flex; align-items: center; gap: 13px; min-width: 300px;
+    padding: 12px 18px 12px 12px; border-radius: 16px;
+    background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .row.before .presence { opacity: 0.55; }
+  .presence .avatar { width: 42px; height: 42px; font-size: 15px; }
+  .presence .name { font-size: 16px; font-weight: 500; }
+  .presence .status { margin-top: 3px; font-size: 13px; color: var(--secondary); }
+  .presence .status.online { color: #3fd6b0; }
+
+  /* Scheduled messages */
+  .compose { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 10px; position: relative; }
+  .sched-strip {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px 10px 14px; border-radius: 16px; background: var(--in);
+    font-size: 13.5px;
+  }
+  .sched-strip svg.clock { width: 16px; height: 16px; color: var(--accent); flex: none; }
+  .sched-strip .when { color: var(--accent); font-weight: 600; }
+  .sched-strip .what { color: var(--secondary); flex: 1; }
+  .sched-strip .x { color: var(--dim); font-size: 16px; padding: 0 4px; }
+  .composer-row { display: flex; align-items: center; gap: 10px; }
+  .composer {
+    flex: 1; padding: 13px 18px; border-radius: 26px; background: var(--surface);
+    font-size: 15px; color: var(--text);
+  }
+  .send-btn {
+    width: 46px; height: 46px; border-radius: 50%; background: var(--accent);
+    display: grid; place-items: center; box-shadow: 0 0 0 5px rgba(0, 168, 132, 0.14);
+  }
+  .send-btn svg { width: 20px; height: 20px; color: #0b141a; }
+  .menu {
+    position: absolute; right: 0; bottom: 124px; width: 230px;
+    padding: 8px; border-radius: 14px; background: #233138;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 22px 44px -16px rgba(0, 0, 0, 0.8);
+  }
+  .menu .head { font-size: 12px; font-weight: 600; color: var(--secondary); padding: 4px 10px 6px; }
+  .menu .item { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; font-size: 13.5px; }
+  .menu .item svg { width: 15px; height: 15px; color: var(--secondary); }
+  .menu .item.hot { background: var(--hover); }
 </style>
 </head>
 <body>
@@ -186,6 +255,13 @@
     <symbol id="check" viewBox="0 0 16 16">
       <circle cx="8" cy="8" r="7.2" fill="rgba(0,168,132,0.18)"/>
       <path d="M4.8 8.2 7 10.3 11.3 5.8" fill="none" stroke="#3fd6b0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="clock" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="send" viewBox="0 0 24 24">
+      <path d="M4 12 20 4l-6 16-2.5-6.5L4 12Z" fill="currentColor"/>
     </symbol>
     <symbol id="arrow" viewBox="0 0 40 14">
       <path d="M1 7h34" stroke="rgba(233,237,239,0.28)" stroke-width="1.6" stroke-dasharray="3 4" stroke-linecap="round"/>
@@ -267,6 +343,69 @@
     </div>
   </section>
 
+  <!-- 5. Edit history -->
+  <section class="card" id="edits-card">
+    <header><div class="title">Edits keep their history</div></header>
+    <div class="stage-center">
+      <div class="edit-demo">
+        <div class="tip"><div class="k">Before the edit</div><div class="v">Running 30 min late</div></div>
+        <div class="bubble in">Running 10 min late
+          <span class="meta"><span class="edited-mark">edited</span> 21:14</span>
+        </div>
+        <svg class="cursor" style="right:50px; top:118px" viewBox="0 0 22 30">
+          <path d="M2 2v22.5l5.6-5.2 3.9 8.8 3.9-1.7-3.8-8.7H19L2 2Z" fill="#fff" stroke="#0b141a" stroke-width="1.5" stroke-linejoin="round"/>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. Ghost mode -->
+  <section class="card" id="ghost-card">
+    <header>
+      <div class="title">Ghost mode</div>
+      <div class="pill">Ghost mode <span class="switch on"></span></div>
+    </header>
+    <div class="rows">
+      <div class="row before">
+        <span class="tag">ZapFast</span>
+        <div class="presence">
+          <div class="avatar" style="background:#e7b16a">Y</div>
+          <div><div class="name">You</div><div class="status online">online</div></div>
+        </div>
+      </div>
+      <div class="row">
+        <span class="tag on">Patched</span>
+        <div class="presence">
+          <div class="avatar" style="background:#e7b16a">Y</div>
+          <div><div class="name">You</div><div class="status">last seen today at 18:02</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7. Scheduled messages -->
+  <section class="card" id="scheduled-card">
+    <header><div class="title">Scheduled messages</div></header>
+    <div class="compose">
+      <div class="menu">
+        <div class="head">Send later</div>
+        <div class="item"><svg><use href="#clock"/></svg>In 1 hour</div>
+        <div class="item"><svg><use href="#clock"/></svg>Tonight at 21:00</div>
+        <div class="item hot"><svg><use href="#clock"/></svg>Tomorrow at 09:00</div>
+      </div>
+      <div class="sched-strip">
+        <svg class="clock"><use href="#clock"/></svg>
+        <span class="when">Tomorrow at 09:00</span>
+        <span class="what">Happy birthday!</span>
+        <span class="x">×</span>
+      </div>
+      <div class="composer-row">
+        <div class="composer">Don't forget the tickets</div>
+        <div class="send-btn"><svg><use href="#send"/></svg></div>
+      </div>
+    </div>
+  </section>
+
   <!-- 4. Always up to date -->
   <section class="card" id="updates-card">
     <header><div class="title">Always up to date</div></header>
@@ -280,8 +419,9 @@
       <div class="node">
         <div class="label">Patched</div>
         <div class="patch"><svg><use href="#check"/></svg>Read ticks</div>
-        <div class="patch"><svg><use href="#check"/></svg>Deleted stay</div>
-        <div class="patch"><svg><use href="#check"/></svg>Screen privacy</div>
+        <div class="patch"><svg><use href="#check"/></svg>Anti-delete</div>
+        <div class="patch"><svg><use href="#check"/></svg>Ghost mode</div>
+        <div class="patch more">+ 3 more</div>
       </div>
       <div class="link"><svg><use href="#arrow"/></svg></div>
       <div class="node you">

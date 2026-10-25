@@ -13,6 +13,9 @@ CARDS = {
     "ticks-card": "ticks.png",
     "deleted-card": "deleted.png",
     "privacy-card": "privacy.png",
+    "edits-card": "edits.png",
+    "ghost-card": "ghost.png",
+    "scheduled-card": "scheduled.png",
     "updates-card": "updates.png",
 }
 

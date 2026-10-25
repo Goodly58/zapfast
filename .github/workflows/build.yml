@@ -1,7 +1,7 @@
 name: Build patched ZapFast
 
 # Every six hours: when crmne/zapfast has a release this repository has not
-# built yet, build its Windows x64 packages with patches/ applied, sign the
+# built yet, build its Windows x64 and macOS packages with patches/ applied, sign the
 # update manifest with this repository's key and publish them under the same
 # tag. ZapFast's own updater, patched to look here, offers it as a normal
 # update. The build steps follow upstream's release.yml.
@@ -160,9 +160,80 @@ jobs:
             zapfast/dist/*.msi
           if-no-files-found: error
 
+  # Unsigned: without an Apple Developer ID, native-packages keeps the ad-hoc
+  # signature bundle.sh gives the app, so macOS asks once to "Open Anyway".
+  # ZapFast's updater checks the publisher only for apps signed by a team, so
+  # updates from this repository still install.
+  macos:
+    name: build (macos-universal)
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: macos-latest
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      CARGO_TERM_COLOR: always
+      ZAPFAST_GIPHY_KEY: ${{ secrets.ZAPFAST_GIPHY_KEY }}
+    defaults:
+      run:
+        working-directory: zapfast
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: fork
+      - uses: actions/checkout@v7
+        with:
+          repository: crmne/zapfast
+          ref: ${{ needs.check.outputs.tag }}
+          path: zapfast
+      - name: Apply the patches
+        run: |
+          for patch in ../fork/patches/*.patch; do git apply --verbose "$patch"; done
+          cp ../fork/update-public-key.hex assets/update-public-key.hex
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          test "$TAG" = "v$version"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build both architectures
+        run: |
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
+      - name: Universal binary
+        run: |
+          mkdir -p universal
+          lipo -create \
+            target/aarch64-apple-darwin/release/zapfast \
+            target/x86_64-apple-darwin/release/zapfast \
+            -output universal/zapfast
+          rm -rf target
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+      - name: App bundle and disk image
+        run: |
+          gem install native-packages --version 0.10.0 --no-document
+          version="${TAG#v}"
+          mkdir -p dist/macos-input
+          bash packaging/macos/bundle.sh universal/zapfast dist/macos-input/ZapFast.app "$version"
+          cp README.md LICENSE THIRD-PARTY-NOTICES.md dist/macos-input/
+          native-packages build --version "$version" --target macos-universal \
+            --defer-recipes --output "$RUNNER_TEMP/macos-packages"
+          cp "$RUNNER_TEMP/macos-packages/packages/macos-universal/dmg/"*.dmg dist/
+          rm -rf dist/macos-input
+          codesign --display --verbose=2 "$(hdiutil attach -nobrowse -readonly dist/*.dmg | tail -1 | cut -f3)/ZapFast.app" 2>&1 | head -5 || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-universal
+          path: zapfast/dist/*.dmg
+          if-no-files-found: error
+
   publish:
     name: GitHub release
-    needs: [check, build]
+    needs: [check, build, macos]
+    # The Mac build is newer and unsigned: a failure there must not hold back
+    # the Windows release.
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -192,7 +263,7 @@ jobs:
       # notify upstream's contributors from this repository.
       - name: Release notes
         run: |
-          echo "[ZapFast $TAG](https://github.com/crmne/zapfast/releases/tag/$TAG) for Windows x64, with [these patches](https://github.com/$GITHUB_REPOSITORY#readme)." > notes.md
+          echo "[ZapFast $TAG](https://github.com/crmne/zapfast/releases/tag/$TAG) with [these patches](https://github.com/$GITHUB_REPOSITORY#readme). On a Mac the app is unsigned: the first time, open it from System Settings → Privacy & Security → Open Anyway." > notes.md
       # A rebuild replaces the release and its tag. The version stays the
       # same, so installed copies take it by hand, not through the updater.
       - name: Publish
