@@ -1,13 +1,20 @@
 name: release-test
 on: workflow_dispatch
 permissions:
-  contents: write
+  contents: read
 jobs:
   t:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - run: |
-          gh release create test-on-main --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --notes test && echo "A: tag on main OK" || echo "A: tag on main FAILED"
-          gh release create test-on-orphan --repo "$GITHUB_REPOSITORY" --target release-tags --notes test && echo "B: tag on release-tags OK" || echo "B: tag on release-tags FAILED"
+          mkdir -p dist && echo a > dist/a.msi && echo b > dist/checksums.txt
+          echo "notes" > notes.md
+          GH_DEBUG=api gh release create test-c dist/* --repo "$GITHUB_REPOSITORY" --title "test c" --notes-file notes.md --target "$GITHUB_SHA" 2>&1 | grep -E "^(\* Request|< HTTP|\{\"message)|github.com/.*/releases" | head -20 && echo "C: OK" || echo "C: FAILED"
+          GH_DEBUG=api gh release create test-d --repo "$GITHUB_REPOSITORY" --title "test d" --notes-file notes.md --target "$GITHUB_SHA" 2>&1 | grep -E "^(\* Request|< HTTP)" | head -6; echo "D done"
