@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ZapFast, patched: feature cards</title>
+<!-- Source of the README images. Render with: py -3.13 docs/visuals/render.py -->
+<style>
+  :root {
+    --window: #0b141a;
+    --panel: #111b21;
+    --surface: #202c33;
+    --hover: #2a3942;
+    --text: #e9edef;
+    --secondary: #97a5ae;
+    --dim: #8a989f;
+    --accent: #00a884;
+    --danger: #f15c6d;
+    --out: #005c4b;
+    --in: #202c33;
+    --read: #53bdeb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: transparent;
+    font-family: "Inter", system-ui, sans-serif;
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    color: var(--text);
+  }
+  .stage { display: flex; flex-direction: column; gap: 40px; padding: 40px; width: fit-content; }
+
+  .card {
+    position: relative;
+    width: 720px;
+    height: 360px;
+    padding: 34px 40px;
+    border-radius: 28px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    /* Each card glows in its own pair: --glow top left, --glow-2 bottom right. */
+    --glow: rgba(0, 168, 132, 0.16);
+    --glow-2: rgba(83, 189, 235, 0.10);
+    background:
+      radial-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1.2px) 0 0 / 22px 22px,
+      radial-gradient(110% 90% at 0% 0%, var(--glow), transparent 58%),
+      radial-gradient(90% 80% at 100% 100%, var(--glow-2), transparent 62%),
+      var(--window);
+  }
+  #ticks-card { --glow: rgba(83, 189, 235, 0.27); --glow-2: rgba(0, 168, 132, 0.13); }
+  #deleted-card { --glow: rgba(241, 92, 109, 0.25); --glow-2: rgba(255, 150, 100, 0.11); }
+  #privacy-card { --glow: rgba(139, 124, 246, 0.28); --glow-2: rgba(83, 189, 235, 0.11); }
+  #updates-card { --glow: rgba(0, 168, 132, 0.27); --glow-2: rgba(255, 210, 121, 0.11); }
+  .card {
+    display: flex;
+    flex-direction: column;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; height: 32px; }
+  .title { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; }
+
+  /* Before / after rows */
+  .rows {
+    flex: 1; display: grid; align-content: center; justify-content: center;
+    grid-template-columns: auto auto; column-gap: 28px; row-gap: 22px;
+    padding-bottom: 8px;
+  }
+  .row { display: contents; }
+  .row .tag { justify-self: end; align-self: center; }
+  .tag {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--dim);
+  }
+  .tag.on { color: var(--accent); }
+  .row.before .bubble { opacity: 0.55; }
+
+  .bubble {
+    position: relative;
+    display: inline-flex; align-items: flex-end; gap: 12px;
+    max-width: 440px;
+    padding: 10px 11px 9px 14px;
+    font-size: 18px; line-height: 1.35;
+    border-radius: 12px;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25), 0 10px 30px -12px rgba(0, 0, 0, 0.6);
+  }
+  .bubble.out { justify-self: end; background: var(--out); border-top-right-radius: 4px; }
+  .bubble.in { justify-self: start; background: var(--in); border-top-left-radius: 4px; }
+  .bubble.out::after, .bubble.in::after {
+    content: ""; position: absolute; top: 0; width: 10px; height: 12px;
+  }
+  .bubble.out::after { right: -8px; background: var(--out); clip-path: polygon(0 0, 100% 0, 0 100%); }
+  .bubble.in::after { left: -8px; background: var(--in); clip-path: polygon(0 0, 100% 0, 100% 100%); }
+  .meta {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11.5px; color: rgba(233, 237, 239, 0.62);
+    font-variant-numeric: tabular-nums; white-space: nowrap; transform: translateY(2px);
+  }
+  .ticks { width: 20px; height: 13px; }
+  .ticks.grey { color: rgba(233, 237, 239, 0.62); }
+  .ticks.blue { color: var(--read); filter: drop-shadow(0 0 5px rgba(83, 189, 235, 0.8)); }
+  .ghost { color: var(--secondary); font-style: italic; display: inline-flex; align-items: center; gap: 8px; }
+  .ghost svg { width: 16px; height: 16px; }
+  .deleted { color: var(--danger); font-weight: 500; }
+
+  /* Read receipts switch */
+  .pill {
+    display: inline-flex; align-items: center; gap: 12px;
+    padding: 7px 8px 7px 14px; border-radius: 999px;
+    background: var(--surface); border: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 13px; color: var(--secondary);
+  }
+  .switch { width: 34px; height: 20px; border-radius: 999px; background: #3b4a54; position: relative; }
+  .switch::after {
+    content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px;
+    border-radius: 50%; background: #8a989f;
+  }
+
+  /* Screen privacy */
+  .keys { display: flex; gap: 6px; }
+  kbd {
+    font-family: inherit; font-size: 12px; font-weight: 500; color: var(--text);
+    min-width: 26px; padding: 5px 9px; text-align: center; border-radius: 7px;
+    background: var(--surface); border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 2px 0 rgba(0, 0, 0, 0.45);
+  }
+  .list {
+    margin: auto 0;
+    background: var(--panel); border-radius: 18px; padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    display: flex; flex-direction: column; gap: 2px;
+    position: relative;
+  }
+  .chat {
+    display: grid; grid-template-columns: 44px 1fr auto; align-items: center; column-gap: 14px;
+    height: 64px; padding: 0 14px; border-radius: 12px;
+  }
+  .chat.lit { background: var(--hover); }
+  .avatar {
+    width: 44px; height: 44px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 16px; font-weight: 600; color: #0b141a;
+  }
+  .lines { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+  .name { font-size: 15.5px; font-weight: 500; }
+  .preview { font-size: 13.5px; color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .time { font-size: 11.5px; color: var(--dim); align-self: start; margin-top: 15px; font-variant-numeric: tabular-nums; }
+  .cover { background: var(--hover); border-radius: 6px; height: 13px; }
+  .avatar.cover { height: 44px; border-radius: 50%; }
+  .cursor { position: absolute; width: 22px; height: 30px; filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.55)); }
+
+  /* Updates */
+  .flow {
+    flex: 1; display: grid; grid-template-columns: 1fr 56px 1fr 56px 1fr;
+    align-content: center; align-items: stretch;
+  }
+  .node .chip { margin-top: auto; }
+  .node {
+    border-radius: 20px; padding: 20px 18px;
+    background: var(--panel); border: 1px solid rgba(255, 255, 255, 0.06);
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .node.you { border-color: rgba(0, 168, 132, 0.45); box-shadow: 0 0 0 4px rgba(0, 168, 132, 0.08), 0 18px 40px -18px rgba(0, 168, 132, 0.5); }
+  .node .label { font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+  .node .big { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  .chip {
+    align-self: flex-start; display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12.5px; font-weight: 500; padding: 6px 11px; border-radius: 999px;
+    background: var(--surface); color: var(--secondary);
+  }
+  .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--secondary); }
+  .chip.accent { background: rgba(0, 168, 132, 0.16); color: #3fd6b0; }
+  .chip.accent .dot { background: #3fd6b0; box-shadow: 0 0 8px #3fd6b0; }
+  .patch { display: flex; align-items: center; gap: 9px; font-size: 13.5px; color: var(--text); }
+  .patch svg { width: 15px; height: 15px; flex: none; }
+  .link { display: grid; place-items: center; }
+  .link svg { width: 40px; height: 14px; }
+  .icon { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; }
+  .icon svg { width: 18px; height: 18px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="ticks" viewBox="0 0 18 12">
+      <path d="M1.2 6.6 4.3 9.7 10.9 2.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M7.7 9.4 8.1 9.7 14.7 2.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="check" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="7.2" fill="rgba(0,168,132,0.18)"/>
+      <path d="M4.8 8.2 7 10.3 11.3 5.8" fill="none" stroke="#3fd6b0" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="arrow" viewBox="0 0 40 14">
+      <path d="M1 7h34" stroke="rgba(233,237,239,0.28)" stroke-width="1.6" stroke-dasharray="3 4" stroke-linecap="round"/>
+      <path d="M32 2.5 37.5 7 32 11.5" fill="none" stroke="rgba(233,237,239,0.45)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="stage">
+
+  <!-- 1. Read ticks -->
+  <section class="card" id="ticks-card">
+    <header>
+      <div class="title">Read ticks</div>
+      <div class="pill">Read receipts <span class="switch"></span></div>
+    </header>
+    <div class="rows">
+      <div class="row before">
+        <span class="tag">ZapFast</span>
+        <div class="bubble out">See you at 8?
+          <span class="meta">21:14 <svg class="ticks grey"><use href="#ticks"/></svg></span>
+        </div>
+      </div>
+      <div class="row">
+        <span class="tag on">Patched</span>
+        <div class="bubble out">See you at 8?
+          <span class="meta">21:14 <svg class="ticks blue"><use href="#ticks"/></svg></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. Deleted messages stay -->
+  <section class="card" id="deleted-card">
+    <header><div class="title">Deleted messages stay</div></header>
+    <div class="rows">
+      <div class="row before">
+        <span class="tag">ZapFast</span>
+        <div class="bubble in"><span class="ghost">
+          <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M3.6 12.4 12.4 3.6" stroke="currentColor" stroke-width="1.4"/></svg>
+          This message was deleted</span>
+          <span class="meta">21:14</span>
+        </div>
+      </div>
+      <div class="row">
+        <span class="tag on">Patched</span>
+        <div class="bubble in">The door code is 4471
+          <span class="meta"><span class="deleted">deleted</span> 21:14</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. Screen privacy -->
+  <section class="card" id="privacy-card">
+    <header>
+      <div class="title">Screen privacy</div>
+      <div class="keys"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>H</kbd></div>
+    </header>
+    <div class="list">
+      <div class="chat">
+        <div class="avatar cover"></div>
+        <div class="lines"><div class="cover" style="width:118px"></div><div class="cover" style="width:262px"></div></div>
+        <div class="time">21:20</div>
+      </div>
+      <div class="chat lit" id="revealed">
+        <div class="avatar" style="background:#7fd1b9">R</div>
+        <div class="lines"><div class="name">Rowan</div><div class="preview">Landing at 6, can you pick me up?</div></div>
+        <div class="time">21:14</div>
+      </div>
+      <div class="chat">
+        <div class="avatar cover"></div>
+        <div class="lines"><div class="cover" style="width:92px"></div><div class="cover" style="width:214px"></div></div>
+        <div class="time">20:02</div>
+      </div>
+      <svg class="cursor" style="left:300px; top:96px" viewBox="0 0 22 30">
+        <path d="M2 2v22.5l5.6-5.2 3.9 8.8 3.9-1.7-3.8-8.7H19L2 2Z" fill="#fff" stroke="#0b141a" stroke-width="1.5" stroke-linejoin="round"/>
+      </svg>
+    </div>
+  </section>
+
+  <!-- 4. Always up to date -->
+  <section class="card" id="updates-card">
+    <header><div class="title">Always up to date</div></header>
+    <div class="flow">
+      <div class="node">
+        <div class="label">Upstream</div>
+        <div class="big">ZapFast</div>
+        <span class="chip"><span class="dot"></span>New release</span>
+      </div>
+      <div class="link"><svg><use href="#arrow"/></svg></div>
+      <div class="node">
+        <div class="label">Patched</div>
+        <div class="patch"><svg><use href="#check"/></svg>Read ticks</div>
+        <div class="patch"><svg><use href="#check"/></svg>Deleted stay</div>
+        <div class="patch"><svg><use href="#check"/></svg>Screen privacy</div>
+      </div>
+      <div class="link"><svg><use href="#arrow"/></svg></div>
+      <div class="node you">
+        <div class="label">Your app</div>
+        <div class="big">ZapFast</div>
+        <span class="chip accent"><span class="dot"></span>Update ready</span>
+      </div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>
