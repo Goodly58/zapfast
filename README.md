@@ -1,50 +1,13 @@
 # ZapFast, patched
 
-Windows builds of [ZapFast](https://github.com/crmne/zapfast) with two changes:
+[ZapFast](https://github.com/crmne/zapfast) for Windows x64, rebuilt from every upstream release. Differences from upstream:
 
-- **Read ticks show even when your WhatsApp account has read receipts off.**
-- **Messages others delete for everyone stay**, marked "deleted" in red.
+- **Read ticks always show**, even with your account's read receipts off.
+- **Deleted messages stay.** Messages others delete for everyone are kept and marked *deleted*.
+- **Updates come from this repository**, so they keep these changes.
 
-ZapFast 0.20.0 started greying out other people's read ticks in direct chats
-whenever your account's read receipts are off
-([crmne/zapfast#458](https://github.com/crmne/zapfast/pull/458)), to match the
-phone. WhatsApp still delivers those receipts and ZapFast still stores them;
-the change is display only. This build shows them again.
+Everything else is upstream ZapFast. The changes are in [`patches/`](patches).
 
-Turn off **Settings > Privacy > Send read receipts** in ZapFast as well, so
-reading a chat here sends no blue ticks of your own.
+**[Download the latest release](https://github.com/Goodly58/zapfast/releases/latest)** (`.msi`)
 
-## What is patched
-
-| Patch | Change |
-|---|---|
-| [`0001-show-read-ticks.patch`](patches/0001-show-read-ticks.patch) | `display_delivery` returns the stored status unchanged |
-| [`0002-update-from-this-fork.patch`](patches/0002-update-from-this-fork.patch) | The built-in updater checks this repository and trusts only [this repository's key](update-public-key.hex) |
-| [`0003-keep-deleted-messages.patch`](patches/0003-keep-deleted-messages.patch) | A "delete for everyone" from someone else keeps the message and marks its footer "deleted"; your own deletions work as before |
-
-Anti-delete only works on messages ZapFast received before they were deleted.
-View-once media can't be kept: WhatsApp never sends it to linked devices.
-
-Without the second patch, ZapFast's updater would install the next upstream
-release and drop the first.
-
-## How updates work
-
-[`build.yml`](.github/workflows/build.yml) runs every six hours. When
-upstream publishes a release this repository has not built, it checks out that
-tag, applies `patches/`, builds the Windows x64 packages the way upstream's
-release workflow does, signs the update manifest and publishes a release with
-the same tag. ZapFast then offers it in the app as usual.
-
-If upstream changes the patched code, `git apply` fails, GitHub emails the
-failure, and the installed copy stays on the last patched version until the
-patch is refreshed. To build a particular tag, run the workflow by hand with
-that tag.
-
-The private signing key is the `ZAPFAST_UPDATE_SIGNING_KEY` secret. An
-optional `ZAPFAST_GIPHY_KEY` secret fills the GIF picker's key.
-
-## Licence
-
-ZapFast is © Carmine Paolino and contributors under the [MIT licence](LICENSE).
-This is an unofficial build, not affiliated with ZapFast, WhatsApp or Meta.
+Unofficial build, not affiliated with ZapFast, WhatsApp or Meta. ZapFast © Carmine Paolino and contributors, [MIT](LICENSE).
