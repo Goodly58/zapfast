@@ -1,0 +1,182 @@
+diff --git a/src/backend/worker.rs b/src/backend/worker.rs
+index e5b16c3..a84cd4e 100644
+--- a/src/backend/worker.rs
++++ b/src/backend/worker.rs
+@@ -818,6 +818,7 @@ pub async fn run(
+         forward_queue: None,
+     };
+     worker.load_state();
++    crate::kept_revokes::load(&worker.archive);
+     worker.backfill();
+     worker.backfill_media_albums();
+     worker.backfill_video_notes();
+@@ -4338,7 +4339,11 @@ impl Worker {
+                     // A late answer to an edit sent from here must not
+                     // replace what the phone did since.
+                     self.edits.remove(&(chat.clone(), target.clone()));
+-                    if let Ok(true) =
++                    // Patched build: keep what others delete for everyone.
++                    if old.as_ref().is_some_and(crate::kept_revokes::keeps) {
++                        crate::kept_revokes::remember(&self.archive, &chat, &target);
++                        self.emit_message(&chat, &target);
++                    } else if let Ok(true) =
+                         self.archive
+                             .set_content(&chat, &target, &Content::Revoked, false)
+                     {
+@@ -5662,13 +5667,13 @@ impl Worker {
+                 );
+             }
+             for revoked in chat.revoked {
+-                if self
+-                    .archive
+-                    .message(&id, &revoked)
+-                    .ok()
+-                    .flatten()
+-                    .is_some_and(|old| old.content.listable())
+-                {
++                let old = self.archive.message(&id, &revoked).ok().flatten();
++                // Patched build: keep what others delete for everyone.
++                if old.as_ref().is_some_and(crate::kept_revokes::keeps) {
++                    crate::kept_revokes::remember(&self.archive, &id, &revoked);
++                    continue;
++                }
++                if old.is_some_and(|old| old.content.listable()) {
+                     media_changed_in.insert(id.clone());
+                 }
+                 let _ = self
+diff --git a/src/kept_revokes.rs b/src/kept_revokes.rs
+new file mode 100644
+index 0000000..9be23bf
+--- /dev/null
++++ b/src/kept_revokes.rs
+@@ -0,0 +1,68 @@
++//! Patched build: messages others delete for everyone stay in the archive as
++//! they arrived, marked "deleted" in their footer.
++//!
++//! The archive's meta table remembers which ones, one `chat\tid` per line, so
++//! the mark survives restarts. The set is process-wide: the backend fills it
++//! and the conversation reads it while drawing footers.
++
++use std::collections::HashSet;
++use std::sync::{Mutex, OnceLock, PoisonError};
++
++use crate::archive::Archive;
++use crate::model::{Content, Message};
++
++const META_KEY: &str = "fork_kept_revokes";
++
++fn kept() -> &'static Mutex<HashSet<String>> {
++    static KEPT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
++    KEPT.get_or_init(Default::default)
++}
++
++fn line(chat: &str, id: &str) -> String {
++    format!("{chat}\t{id}")
++}
++
++/// Whether a revoke for everyone leaves this message as it is: someone
++/// else's message with something still to show. Our own deletions, from here
++/// or the phone, still clear our copy.
++pub fn keeps(old: &Message) -> bool {
++    !old.from_me && !matches!(old.content, Content::Revoked | Content::PhoneOnly { .. })
++}
++
++/// Restores the marks this archive kept, when the backend starts.
++pub fn load(archive: &Archive) {
++    let Ok(Some(stored)) = archive.meta(META_KEY) else {
++        return;
++    };
++    let mut kept = kept().lock().unwrap_or_else(PoisonError::into_inner);
++    kept.extend(stored.lines().map(str::to_owned));
++}
++
++/// Marks a message its sender deleted for everyone and saves the mark.
++pub fn remember(archive: &Archive, chat: &str, id: &str) {
++    let line = line(chat, id);
++    kept()
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .insert(line.clone());
++    let stored = archive.meta(META_KEY).ok().flatten().unwrap_or_default();
++    if stored.lines().any(|kept| kept == line) {
++        return;
++    }
++    let value = if stored.is_empty() {
++        line
++    } else {
++        format!("{stored}\n{line}")
++    };
++    if let Err(error) = archive.set_meta(META_KEY, &value) {
++        log::warn!("could not save a kept deletion: {error}");
++    }
++}
++
++/// Whether the sender deleted this message for everyone after it arrived.
++pub fn contains(chat: &str, id: &str) -> bool {
++    kept()
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .contains(&line(chat, id))
++}
+diff --git a/src/lib.rs b/src/lib.rs
+index d73ecda..3a4746a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -27,6 +27,7 @@ pub mod group_admin;
+ pub mod i18n;
+ pub mod image_cache;
+ pub mod image_preview;
++pub mod kept_revokes;
+ #[cfg(target_os = "macos")]
+ pub mod macos;
+ pub mod markup;
+diff --git a/src/ui/conversation.rs b/src/ui/conversation.rs
+index 165ce01..527d65a 100644
+--- a/src/ui/conversation.rs
++++ b/src/ui/conversation.rs
+@@ -5200,13 +5200,25 @@ fn clock_width(ui: &egui::Ui, message: &Message) -> f32 {
+         .x
+ }
+ 
++/// Patched build: the footer's word, "deleted" on a message its sender deleted
++/// for everyone that stays here, and "edited" as upstream.
++fn footer_note(message: &Message) -> Option<&'static str> {
++    let deleted = crate::kept_revokes::contains(&message.chat, &message.id);
++    match (deleted, message.edited) {
++        (true, true) => Some("deleted · edited"),
++        (true, false) => Some("deleted"),
++        (false, true) => Some("edited"),
++        (false, false) => None,
++    }
++}
++
+ /// Width of the message footer, including the room its marks take.
+ fn footer_width(ui: &egui::Ui, message: &Message, starred: bool, pinned: bool) -> f32 {
+     let font = theme::regular(11.0);
+     let time = clock_width(ui, message);
+-    let edited = if message.edited {
++    let edited = if let Some(note) = footer_note(message) {
+         ui.painter()
+-            .layout_no_wrap("edited".to_owned(), font, Color32::WHITE)
++            .layout_no_wrap(note.to_owned(), font, Color32::WHITE)
+             .size()
+             .x
+             + 4.0
+@@ -5454,9 +5466,14 @@ fn footer(
+         font.clone(),
+         palette.secondary,
+     );
+-    let edited = message.edited.then(|| {
+-        ui.painter()
+-            .layout_no_wrap("edited".to_owned(), font, palette.dim)
++    let edited = footer_note(message).map(|note| {
++        // A kept deletion reads in the danger colour, so it stands out.
++        let color = if note == "edited" {
++            palette.dim
++        } else {
++            palette.danger
++        };
++        ui.painter().layout_no_wrap(note.to_owned(), font, color)
+     });
+     // A red dot alone does not say what went wrong or what to do. The word
+     // uses the text colour: the danger red on an outgoing bubble is too faint

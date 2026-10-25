@@ -1,7 +1,9 @@
 # ZapFast, patched
 
-Windows builds of [ZapFast](https://github.com/crmne/zapfast) with one change:
-**read ticks show even when your WhatsApp account has read receipts off.**
+Windows builds of [ZapFast](https://github.com/crmne/zapfast) with two changes:
+
+- **Read ticks show even when your WhatsApp account has read receipts off.**
+- **Messages others delete for everyone stay**, marked "deleted" in red.
 
 ZapFast 0.20.0 started greying out other people's read ticks in direct chats
 whenever your account's read receipts are off
@@ -18,6 +20,10 @@ reading a chat here sends no blue ticks of your own.
 |---|---|
 | [`0001-show-read-ticks.patch`](patches/0001-show-read-ticks.patch) | `display_delivery` returns the stored status unchanged |
 | [`0002-update-from-this-fork.patch`](patches/0002-update-from-this-fork.patch) | The built-in updater checks this repository and trusts only [this repository's key](update-public-key.hex) |
+| [`0003-keep-deleted-messages.patch`](patches/0003-keep-deleted-messages.patch) | A "delete for everyone" from someone else keeps the message and marks its footer "deleted"; your own deletions work as before |
+
+Anti-delete only works on messages ZapFast received before they were deleted.
+View-once media can't be kept: WhatsApp never sends it to linked devices.
 
 Without the second patch, ZapFast's updater would install the next upstream
 release and drop the first.

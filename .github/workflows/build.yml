@@ -15,6 +15,10 @@ on:
         description: Upstream tag to build (blank for the latest release)
         required: false
         default: ""
+      replace:
+        description: Rebuild a release this repository already has (after a patch change)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,10 +42,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WANTED: ${{ inputs.tag }}
+          REPLACE: ${{ inputs.replace }}
         run: |
           tag="${WANTED:-$(gh release view --repo crmne/zapfast --json tagName --jq .tagName)}"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+          if [ "$REPLACE" != "true" ] && gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "$tag is already built."
             echo "build=false" >> "$GITHUB_OUTPUT"
           else
@@ -193,7 +198,12 @@ jobs:
             gh release view "$TAG" --repo crmne/zapfast --json body --jq .body \
               | grep -v -e '^\*\*Download ZapFast:\*\*' -e '^On a Mac'
           } > notes.md
+      # A rebuild replaces the release and its tag. The version stays the
+      # same, so installed copies take it by hand, not through the updater.
       - name: Publish
         run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+          fi
           gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
             --title "ZapFast $TAG (patched)" --notes-file notes.md --target "$GITHUB_SHA"
