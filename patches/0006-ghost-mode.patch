@@ -1,0 +1,56 @@
+diff --git a/src/app.rs b/src/app.rs
+index 877b52b..f193637 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -9004,8 +9004,11 @@ impl App {
+     /// Tells the backend whether the person is looking at the app, so the
+     /// phone keeps its notifications while they are not.
+     fn report_presence(&mut self) {
+-        let looking =
+-            self.window_focused && !self.window_hidden && !self.power.conditions().display_off;
++        // Patched build: ghost mode never reports the window as looked at.
++        let looking = self.window_focused
++            && !self.window_hidden
++            && !self.power.conditions().display_off
++            && !self.settings.ghost_mode;
+         let active = self.active;
+         for (index, account) in self.accounts.iter_mut().enumerate() {
+             let online = looking && index == active;
+diff --git a/src/settings.rs b/src/settings.rs
+index f44a371..6f53ac6 100644
+--- a/src/settings.rs
++++ b/src/settings.rs
+@@ -599,6 +599,8 @@ pub struct Settings {
+     pub window_maximized: bool,
+     /// Local screen privacy. Off by default.
+     pub screen_privacy: ScreenPrivacy,
++    /// Patched build: never tell WhatsApp this window is online.
++    pub ghost_mode: bool,
+ }
+ 
+ impl Default for Settings {
+@@ -657,6 +659,7 @@ impl Default for Settings {
+             window_y: None,
+             window_maximized: false,
+             screen_privacy: ScreenPrivacy::default(),
++            ghost_mode: false,
+         }
+     }
+ }
+diff --git a/src/ui/settings.rs b/src/ui/settings.rs
+index 7ca18b3..75c2990 100644
+--- a/src/ui/settings.rs
++++ b/src/ui/settings.rs
+@@ -590,6 +590,12 @@ fn sections(app: &App) -> Vec<Section> {
+         "",
+         |settings| &mut settings.send_typing,
+     );
++    // Patched build.
++    privacy.toggle(
++        translated(locale, "Ghost mode"),
++        translated(locale, "Never show as online while you use ZapFast."),
++        |settings| &mut settings.ghost_mode,
++    );
+     app_lock_rows(app, &mut privacy);
+     // The account values live on the phone: they are shown once fetched and
+     // edited only while connected with a fresh snapshot.

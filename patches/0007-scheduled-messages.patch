@@ -1,0 +1,435 @@
+diff --git a/src/app.rs b/src/app.rs
+index f193637..23b3bf3 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -5648,6 +5648,28 @@ impl App {
+         self.follow_outgoing();
+     }
+ 
++    /// Patched build: queues composed text to send at `at`, in Unix seconds.
++    pub(crate) fn schedule_text(&mut self, chat: ChatId, text: String, at: i64) {
++        let text = text.trim().to_owned();
++        if text.is_empty() {
++            return;
++        }
++        let (text, mentions) = self.encode_composer_mentions(&chat, text);
++        self.emoji_start = None;
++        self.mention_start = None;
++        self.stop_composing(&chat);
++        self.store_draft(&chat, "");
++        let item = crate::scheduled::Scheduled::new(chat, text, mentions, at);
++        crate::scheduled::show(item.clone());
++        self.backend.send(Command::ScheduleText(item));
++    }
++
++    /// Patched build: drops a queued text.
++    pub(crate) fn cancel_scheduled(&mut self, id: u64) {
++        crate::scheduled::hide(id);
++        self.backend.send(Command::CancelScheduled(id));
++    }
++
+     /// Snapshots selected mentions before the view queues an attachment send.
+     pub(crate) fn composer_mentions(&self) -> Vec<ComposerMention> {
+         self.composer_mentions.clone()
+diff --git a/src/backend.rs b/src/backend.rs
+index 4df13be..edafec5 100644
+--- a/src/backend.rs
++++ b/src/backend.rs
+@@ -168,6 +168,10 @@ pub enum Command {
+         quoting: Option<crate::model::ReplyTarget>,
+         mentions: Vec<String>,
+     },
++    /// Patched build: queues a text to send later.
++    ScheduleText(crate::scheduled::Scheduled),
++    /// Patched build: drops a queued text.
++    CancelScheduled(u64),
+     SendLocation {
+         chat: ChatId,
+         latitude: f64,
+diff --git a/src/backend/worker.rs b/src/backend/worker.rs
+index 6f0d4c5..a019d84 100644
+--- a/src/backend/worker.rs
++++ b/src/backend/worker.rs
+@@ -820,6 +820,7 @@ pub async fn run(
+     worker.load_state();
+     crate::kept_revokes::load(&worker.archive);
+     crate::kept_edits::load(&worker.archive);
++    crate::scheduled::load(&worker.archive);
+     worker.backfill();
+     worker.backfill_media_albums();
+     worker.backfill_video_notes();
+@@ -899,6 +900,12 @@ pub async fn run(
+             }
+             _ = tick.tick() => {
+                 worker.watch_link();
++                // Patched build: send the scheduled messages that came due.
++                if matches!(worker.status, LinkStatus::Connected) {
++                    for item in crate::scheduled::take_due(&worker.archive, crate::util::now()) {
++                        worker.send_text(item.chat, item.text, None, item.mentions);
++                    }
++                }
+                 worker.reveal_unconfirmed_after_grace();
+                 worker.settle_presence();
+                 worker.refresh_legacy_preferences();
+@@ -6259,6 +6266,8 @@ impl Worker {
+                 quoting,
+                 mentions,
+             } => self.send_text(chat, text, quoting, mentions),
++            Command::ScheduleText(item) => crate::scheduled::add(&self.archive, item),
++            Command::CancelScheduled(id) => crate::scheduled::cancel(&self.archive, id),
+             Command::SendLocation {
+                 chat,
+                 latitude,
+diff --git a/src/lib.rs b/src/lib.rs
+index 20adf1d..c669eae 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -45,6 +45,7 @@ pub mod privacy;
+ pub mod proxy;
+ pub mod qr;
+ pub mod safety;
++pub mod scheduled;
+ pub mod settings;
+ pub mod single_instance;
+ pub mod sticker_meta;
+diff --git a/src/scheduled.rs b/src/scheduled.rs
+new file mode 100644
+index 0000000..be3f38d
+--- /dev/null
++++ b/src/scheduled.rs
+@@ -0,0 +1,208 @@
++//! Patched build: messages written now and sent later.
++//!
++//! Each account's backend keeps its queue in the archive's meta table, so it
++//! survives restarts, and sends what is due on its five-second tick through
++//! the usual text path. Nothing goes out while ZapFast is closed: a message
++//! that came due meanwhile is sent once ZapFast is connected again. The queue
++//! is also kept process-wide, so the composer lists it without asking the
++//! backend.
++
++use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
++
++use serde::{Deserialize, Serialize};
++
++use crate::archive::Archive;
++use crate::model::ChatId;
++
++const META_KEY: &str = "fork_scheduled";
++
++#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
++pub struct Scheduled {
++    /// Unique for the life of the queue.
++    pub id: u64,
++    pub chat: ChatId,
++    /// Composer text, its mentions already encoded.
++    pub text: String,
++    pub mentions: Vec<String>,
++    /// When to send, in Unix seconds.
++    pub at: i64,
++}
++
++impl Scheduled {
++    pub fn new(chat: ChatId, text: String, mentions: Vec<String>, at: i64) -> Self {
++        let id = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH)
++            .map_or(0, |elapsed| elapsed.as_nanos() as u64);
++        Self {
++            id,
++            chat,
++            text,
++            mentions,
++            at,
++        }
++    }
++}
++
++fn shown() -> MutexGuard<'static, Vec<Scheduled>> {
++    static SHOWN: OnceLock<Mutex<Vec<Scheduled>>> = OnceLock::new();
++    SHOWN
++        .get_or_init(Default::default)
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++}
++
++fn stored(archive: &Archive) -> Vec<Scheduled> {
++    archive
++        .meta(META_KEY)
++        .ok()
++        .flatten()
++        .and_then(|json| serde_json::from_str(&json).ok())
++        .unwrap_or_default()
++}
++
++fn store(archive: &Archive, queue: &[Scheduled]) {
++    match serde_json::to_string(queue) {
++        Ok(json) => {
++            if let Err(error) = archive.set_meta(META_KEY, &json) {
++                log::warn!("could not save the scheduled messages: {error}");
++            }
++        }
++        Err(error) => log::warn!("could not encode the scheduled messages: {error}"),
++    }
++}
++
++/// Lists this archive's queue in the composer, when the backend starts.
++pub fn load(archive: &Archive) {
++    for item in stored(archive) {
++        show(item);
++    }
++}
++
++/// Lists a message in the composer at once, before the backend saves it.
++pub fn show(item: Scheduled) {
++    let mut shown = shown();
++    if !shown.iter().any(|known| known.id == item.id) {
++        shown.push(item);
++    }
++}
++
++/// Takes a message out of the composer's list at once.
++pub fn hide(id: u64) {
++    shown().retain(|item| item.id != id);
++}
++
++/// Saves a message to send later.
++pub fn add(archive: &Archive, item: Scheduled) {
++    let mut queue = stored(archive);
++    if !queue.iter().any(|known| known.id == item.id) {
++        queue.push(item.clone());
++        store(archive, &queue);
++    }
++    show(item);
++}
++
++/// Drops a message that was to be sent later.
++pub fn cancel(archive: &Archive, id: u64) {
++    let mut queue = stored(archive);
++    let before = queue.len();
++    queue.retain(|item| item.id != id);
++    if queue.len() != before {
++        store(archive, &queue);
++    }
++    hide(id);
++}
++
++/// Takes the messages due by `now` out of the queue, oldest first.
++pub fn take_due(archive: &Archive, now: i64) -> Vec<Scheduled> {
++    let queue = stored(archive);
++    if !queue.iter().any(|item| item.at <= now) {
++        return Vec::new();
++    }
++    let (mut due, rest): (Vec<_>, Vec<_>) = queue.into_iter().partition(|item| item.at <= now);
++    store(archive, &rest);
++    for item in &due {
++        hide(item.id);
++    }
++    due.sort_by_key(|item| item.at);
++    due
++}
++
++/// The messages waiting to go to `chat`, soonest first.
++pub fn for_chat(chat: &str) -> Vec<Scheduled> {
++    let mut items: Vec<_> = shown()
++        .iter()
++        .filter(|item| item.chat == chat)
++        .cloned()
++        .collect();
++    items.sort_by_key(|item| item.at);
++    items
++}
++
++/// Quick choices for when to send: a label and a Unix time.
++pub fn presets(now: i64) -> Vec<(String, i64)> {
++    let mut presets = vec![
++        ("In 1 hour".to_owned(), now + 60 * 60),
++        ("In 3 hours".to_owned(), now + 3 * 60 * 60),
++    ];
++    let Ok(timestamp) = jiff::Timestamp::from_second(now) else {
++        return presets;
++    };
++    let zone = jiff::tz::TimeZone::system();
++    let local = timestamp.to_zoned(zone.clone());
++    if let Ok(tonight) = local.date().at(21, 0, 0, 0).to_zoned(zone.clone()) {
++        let at = tonight.timestamp().as_second();
++        if at > now + 5 * 60 {
++            presets.push((format!("Tonight at {}", crate::util::clock(at)), at));
++        }
++    }
++    if let Ok(tomorrow) = local.date().tomorrow()
++        && let Ok(morning) = tomorrow.at(9, 0, 0, 0).to_zoned(zone)
++    {
++        let at = morning.timestamp().as_second();
++        presets.push((format!("Tomorrow at {}", crate::util::clock(at)), at));
++    }
++    presets
++}
++
++/// The next time the clock reads `text` ("21:30" or "9:05"): today, or
++/// tomorrow once that has passed.
++pub fn next_at(now: i64, text: &str) -> Option<i64> {
++    let (hour, minute) = text.trim().split_once(':')?;
++    let hour: i8 = hour.trim().parse().ok().filter(|hour| (0..24).contains(hour))?;
++    let minute: i8 = minute
++        .trim()
++        .parse()
++        .ok()
++        .filter(|minute| (0..60).contains(minute))?;
++    let zone = jiff::tz::TimeZone::system();
++    let local = jiff::Timestamp::from_second(now).ok()?.to_zoned(zone.clone());
++    let today = local
++        .date()
++        .at(hour, minute, 0, 0)
++        .to_zoned(zone.clone())
++        .ok()?
++        .timestamp()
++        .as_second();
++    if today > now {
++        return Some(today);
++    }
++    let tomorrow = local.date().tomorrow().ok()?.at(hour, minute, 0, 0);
++    Some(tomorrow.to_zoned(zone).ok()?.timestamp().as_second())
++}
++
++/// "21:00", "Tomorrow at 09:00", or "Mon 03 Nov at 09:00".
++pub fn when_label(at: i64) -> String {
++    let time = crate::util::clock(at);
++    let Ok(timestamp) = jiff::Timestamp::from_second(at) else {
++        return time;
++    };
++    let date = timestamp.to_zoned(jiff::tz::TimeZone::system()).date();
++    let today = crate::util::today();
++    if date == today {
++        time
++    } else if today.tomorrow().ok() == Some(date) {
++        format!("Tomorrow at {time}")
++    } else {
++        format!("{} at {time}", date.strftime("%a %d %b"))
++    }
++}
+diff --git a/src/ui/conversation.rs b/src/ui/conversation.rs
+index b129a01..37c9744 100644
+--- a/src/ui/conversation.rs
++++ b/src/ui/conversation.rs
+@@ -1460,6 +1460,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+             {
+                 unsent_voice_strip(app, ui, samples);
+             }
++            scheduled_strip(app, ui, &chat.id);
+             if app.editing.is_some() {
+                 edit_strip(app, ui);
+             } else if let Some(reply_id) = app.reply_to.clone() {
+@@ -1873,12 +1874,16 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+                     } else {
+                         Icon::Send
+                     };
+-                    if theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
+-                        .tab_stop(Stop::Send)
+-                        .clicked()
+-                    {
++                    let send =
++                        theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
++                            .tab_stop(Stop::Send);
++                    if send.clicked() {
+                         send_click = true;
+                     }
++                    // Patched build: right-click Send to send the text later.
++                    if app.editing.is_none() && app.pending.is_empty() && app.reply_to.is_none() {
++                        send.context_menu(|ui| schedule_menu(app, ui, &chat.id));
++                    }
+                 });
+             },
+                     );
+@@ -2176,6 +2181,93 @@ fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
+     strip_gap(ui);
+ }
+ 
++/// Patched build: the messages waiting to be sent to this chat, soonest
++/// first, each with a way to cancel it.
++fn scheduled_strip(app: &mut App, ui: &mut egui::Ui, chat: &str) {
++    let items = crate::scheduled::for_chat(chat);
++    if items.is_empty() {
++        return;
++    }
++    let palette = app.palette;
++    widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
++        ui.set_width(ui.available_width());
++        for item in &items {
++            ui.horizontal(|ui| {
++                theme::icon(ui, Icon::Clock, 16.0, palette.accent);
++                theme::text(
++                    ui,
++                    crate::scheduled::when_label(item.at),
++                    theme::semibold(12.5),
++                    palette.accent,
++                );
++                let preview = item.text.lines().next().unwrap_or_default().to_owned();
++                let width = (ui.available_width() - 30.0).max(0.0);
++                ui.allocate_ui_with_layout(
++                    vec2(width, 18.0),
++                    Layout::left_to_right(Align::Center),
++                    |ui| {
++                        theme::text(ui, preview, theme::regular(12.5), palette.secondary);
++                    },
++                );
++                if theme::icon_button(
++                    ui,
++                    Icon::X,
++                    16.0,
++                    palette.secondary,
++                    palette.text,
++                    "Cancel scheduled message",
++                )
++                .clicked()
++                {
++                    app.cancel_scheduled(item.id);
++                }
++            });
++        }
++    });
++    strip_gap(ui);
++}
++
++/// Patched build: the Send button's right-click menu, which sends the
++/// composed text later instead of now.
++fn schedule_menu(app: &mut App, ui: &mut egui::Ui, chat: &str) {
++    let palette = app.palette;
++    let now = crate::util::now();
++    let mut chosen = None;
++    theme::text(ui, "Send later", theme::semibold(12.5), palette.secondary);
++    for (label, at) in crate::scheduled::presets(now) {
++        if widgets::menu_item(ui, &palette, Some(Icon::Clock), &label) {
++            chosen = Some(at);
++        }
++    }
++    let id = egui::Id::new("schedule-at");
++    let mut custom = ui.data(|data| data.get_temp::<String>(id)).unwrap_or_default();
++    let custom_at = crate::scheduled::next_at(now, &custom);
++    ui.horizontal(|ui| {
++        ui.add(
++            egui::TextEdit::singleline(&mut custom)
++                .hint_text("21:30")
++                .desired_width(56.0),
++        );
++        let label = match custom_at {
++            Some(at) => format!("Send {}", crate::scheduled::when_label(at)),
++            None => "Send at a time".to_owned(),
++        };
++        if ui
++            .add_enabled(custom_at.is_some(), egui::Button::new(label))
++            .clicked()
++        {
++            chosen = custom_at;
++        }
++    });
++    ui.data_mut(|data| data.insert_temp(id, custom));
++    if let Some(at) = chosen {
++        let text = std::mem::take(&mut app.composer);
++        app.schedule_text(chat.to_owned(), text, at);
++        app.focus_composer = true;
++        ui.close();
++    }
++}
++
+ fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
+     let palette = app.palette;
+     widgets::raised(ui, &palette, strip_frame(&palette), |ui| {

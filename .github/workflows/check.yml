@@ -53,7 +53,7 @@ jobs:
       - name: Apply the patches
         working-directory: zapfast
         run: |
-          git apply --verbose ../fork/patches/*.patch
+          for patch in ../fork/patches/*.patch; do git apply --verbose "$patch"; done
           cp ../fork/update-public-key.hex assets/update-public-key.hex
       - name: GUI build dependencies
         run: |

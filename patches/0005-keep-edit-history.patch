@@ -1,0 +1,178 @@
+diff --git a/src/backend/worker.rs b/src/backend/worker.rs
+index a84cd4e..6f0d4c5 100644
+--- a/src/backend/worker.rs
++++ b/src/backend/worker.rs
+@@ -819,6 +819,7 @@ pub async fn run(
+     };
+     worker.load_state();
+     crate::kept_revokes::load(&worker.archive);
++    crate::kept_edits::load(&worker.archive);
+     worker.backfill();
+     worker.backfill_media_albums();
+     worker.backfill_video_notes();
+@@ -4363,6 +4364,12 @@ impl Worker {
+                         let existing = self.archive.message(&chat, &target).ok().flatten();
+                         if let Some(existing) = &existing {
+                             content.keep_local_paths(&existing.content);
++                            // Patched build: keep what it said before.
++                            crate::kept_edits::remember(
++                                &self.archive,
++                                existing,
++                                &content.full_summary(),
++                            );
+                         }
+                         if let Ok(true) = self
+                             .archive
+diff --git a/src/kept_edits.rs b/src/kept_edits.rs
+new file mode 100644
+index 0000000..2b6376a
+--- /dev/null
++++ b/src/kept_edits.rs
+@@ -0,0 +1,86 @@
++//! Patched build: when someone edits a message, what it said before stays
++//! here, shown when you hover its "edited" mark.
++//!
++//! The archive's meta table keeps each message's earlier versions, oldest
++//! first, so they survive restarts. As with [`crate::kept_revokes`], the map is
++//! process-wide: the backend fills it and the conversation reads it.
++
++use std::collections::HashMap;
++use std::sync::{Mutex, OnceLock, PoisonError};
++
++use crate::archive::Archive;
++use crate::model::Message;
++
++const META_KEY: &str = "fork_kept_edits";
++
++/// Earlier versions by `chat\tid`, oldest first.
++type Versions = HashMap<String, Vec<String>>;
++
++fn kept() -> &'static Mutex<Versions> {
++    static KEPT: OnceLock<Mutex<Versions>> = OnceLock::new();
++    KEPT.get_or_init(Default::default)
++}
++
++fn key(chat: &str, id: &str) -> String {
++    format!("{chat}\t{id}")
++}
++
++fn stored(archive: &Archive) -> Versions {
++    archive
++        .meta(META_KEY)
++        .ok()
++        .flatten()
++        .and_then(|json| serde_json::from_str(&json).ok())
++        .unwrap_or_default()
++}
++
++/// Restores the earlier versions this archive kept, when the backend starts.
++pub fn load(archive: &Archive) {
++    let stored = stored(archive);
++    kept()
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .extend(stored);
++}
++
++/// Keeps what someone else's message said before an edit replaces it with
++/// `new_text`. Our own edits are left alone: we know what we wrote.
++pub fn remember(archive: &Archive, old: &Message, new_text: &str) {
++    if old.from_me {
++        return;
++    }
++    let before = old.content.full_summary();
++    if before.is_empty() || before == new_text {
++        return;
++    }
++    let key = key(&old.chat, &old.id);
++    let mut stored = stored(archive);
++    let versions = stored.entry(key.clone()).or_default();
++    // The same edit can arrive twice, live and again from history.
++    if versions.last() == Some(&before) {
++        return;
++    }
++    versions.push(before);
++    let versions = versions.clone();
++    match serde_json::to_string(&stored) {
++        Ok(json) => {
++            if let Err(error) = archive.set_meta(META_KEY, &json) {
++                log::warn!("could not save an earlier version: {error}");
++            }
++        }
++        Err(error) => log::warn!("could not encode earlier versions: {error}"),
++    }
++    kept()
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .insert(key, versions);
++}
++
++/// What the message said before its edits, oldest first.
++pub fn versions(chat: &str, id: &str) -> Option<Vec<String>> {
++    kept()
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner)
++        .get(&key(chat, id))
++        .cloned()
++}
+diff --git a/src/lib.rs b/src/lib.rs
+index 3a4746a..20adf1d 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -27,6 +27,7 @@ pub mod group_admin;
+ pub mod i18n;
+ pub mod image_cache;
+ pub mod image_preview;
++pub mod kept_edits;
+ pub mod kept_revokes;
+ #[cfg(target_os = "macos")]
+ pub mod macos;
+diff --git a/src/ui/conversation.rs b/src/ui/conversation.rs
+index ecff592..b129a01 100644
+--- a/src/ui/conversation.rs
++++ b/src/ui/conversation.rs
+@@ -5313,6 +5313,21 @@ fn footer_note(message: &Message) -> Option<&'static str> {
+     }
+ }
+ 
++/// Patched build: the tooltip on "edited", with what the message said before.
++fn earlier_versions(versions: &[String]) -> String {
++    match versions {
++        [only] => format!("Before the edit:\n{only}"),
++        _ => {
++            let mut text = String::from("Earlier versions, oldest first:");
++            for version in versions {
++                text.push_str("\n• ");
++                text.push_str(version);
++            }
++            text
++        }
++    }
++}
++
+ /// Width of the message footer, including the room its marks take.
+ fn footer_width(ui: &egui::Ui, message: &Message, starred: bool, pinned: bool) -> f32 {
+     let font = theme::regular(11.0);
+@@ -5635,11 +5650,19 @@ fn footer(
+     }
+     if let Some(edited) = edited {
+         x -= edited.size().x + 4.0;
+-        ui.painter().galley(
++        let label = Rect::from_min_size(
+             pos2(x, rect.center().y - edited.size().y / 2.0),
+-            edited,
+-            palette.dim,
++            edited.size(),
+         );
++        ui.painter().galley(label.min, edited, palette.dim);
++        // Patched build: hovering "edited" shows what the message said before.
++        if message.edited
++            && let Some(versions) = crate::kept_edits::versions(&message.chat, &message.id)
++        {
++            ui.interact(label, ui.id().with(("edited", &message.id)), Sense::hover())
++                .on_hover_cursor(egui::CursorIcon::Help)
++                .on_hover_text(earlier_versions(&versions));
++        }
+     }
+     if let Some(failed) = failed {
+         x -= failed.size().x + 6.0;

@@ -94,7 +94,7 @@ jobs:
       - name: Apply the patches
         shell: bash
         run: |
-          git apply --verbose ../fork/patches/*.patch
+          for patch in ../fork/patches/*.patch; do git apply --verbose "$patch"; done
           cp ../fork/update-public-key.hex assets/update-public-key.hex
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
           test "$TAG" = "v$version"
