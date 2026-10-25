@@ -4,7 +4,7 @@
 
 - **Read ticks always show**, even with your account's read receipts off.
 - **Deleted messages stay.** Messages others delete for everyone are kept and marked *deleted*.
-- **Screen privacy.** Covers chats, messages, media, names and avatars until hovered (Ctrl+Shift+H, off by default). From [ZapFaster](https://github.com/eternalwaitt/zap-faster).
+- **Screen privacy.** Covers chats, messages, media, names and avatars until hovered (Ctrl+Shift+H, off by default). By [paulo1403](https://github.com/paulo1403) ([crmne/zapfast#451](https://github.com/crmne/zapfast/pull/451)), via [ZapFaster](https://github.com/eternalwaitt/zap-faster).
 - **Updates come from this repository**, so they keep these changes.
 
 <p align="center">
