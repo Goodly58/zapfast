@@ -1,6 +1,6 @@
 # ZapFast, patched
 
-[ZapFast](https://github.com/crmne/zapfast) for Windows x64 with a few patches on top. This isn't a separate app: every new ZapFast release is picked up, patched and published here automatically, so you get all of upstream's updates. Differences from upstream:
+[ZapFast](https://github.com/crmne/zapfast) for Windows and macOS with a few patches on top. This isn't a separate app: every new ZapFast release is picked up, patched and published here automatically, so you get all of upstream's updates. Differences from upstream:
 
 - **Read ticks always show**, even with your account's read receipts off.
 - **Deleted messages stay.** Messages others delete for everyone are kept and marked *deleted*.
@@ -28,6 +28,6 @@
 
 Everything else is upstream ZapFast. The changes are in [`patches/`](patches).
 
-**[Download the latest release](https://github.com/Goodly58/zapfast/releases/latest)** (`.msi`)
+**[Download the latest release](https://github.com/Goodly58/zapfast/releases/latest)**: `.msi` for Windows, `.dmg` for Mac. The Mac app is unsigned, so open it the first time from System Settings → Privacy & Security → **Open Anyway**.
 
 Unofficial build, not affiliated with ZapFast, WhatsApp or Meta. ZapFast © Carmine Paolino and contributors, [MIT](LICENSE).
