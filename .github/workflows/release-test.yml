@@ -1,0 +1,13 @@
+name: release-test
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - run: |
+          gh release create test-on-main --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --notes test && echo "A: tag on main OK" || echo "A: tag on main FAILED"
+          gh release create test-on-orphan --repo "$GITHUB_REPOSITORY" --target release-tags --notes test && echo "B: tag on release-tags OK" || echo "B: tag on release-tags FAILED"
