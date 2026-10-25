@@ -1,0 +1,34 @@
+diff --git a/src/ui/conversation.rs b/src/ui/conversation.rs
+index fc235fc..165ce01 100644
+--- a/src/ui/conversation.rs
++++ b/src/ui/conversation.rs
+@@ -5246,23 +5246,15 @@ fn shown_delivery(view: &View<'_>, message: &Message) -> Delivery {
+     )
+ }
+ 
+-/// A DM read receipt is not visible in WhatsApp when our account has read
+-/// receipts off. Keep the archived status intact, but match that display here.
++/// Patched build: show the archived status as WhatsApp delivered it, even
++/// when our account has read receipts off. Upstream greys DM read ticks then.
+ pub(super) fn display_delivery(
+     status: Delivery,
+-    from_me: bool,
+-    chat_kind: crate::model::ChatKind,
+-    account_receipts_off: bool,
++    _from_me: bool,
++    _chat_kind: crate::model::ChatKind,
++    _account_receipts_off: bool,
+ ) -> Delivery {
+-    if account_receipts_off
+-        && chat_kind == crate::model::ChatKind::Direct
+-        && from_me
+-        && status == Delivery::Read
+-    {
+-        Delivery::Delivered
+-    } else {
+-        status
+-    }
++    status
+ }
+ 
+ /// Whether a picture stands without a bubble, as Messages draws a photo

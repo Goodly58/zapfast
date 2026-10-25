@@ -1,0 +1,199 @@
+name: Build patched ZapFast
+
+# Every six hours: when crmne/zapfast has a release this repository has not
+# built yet, build its Windows x64 packages with patches/ applied, sign the
+# update manifest with this repository's key and publish them under the same
+# tag. ZapFast's own updater, patched to look here, offers it as a normal
+# update. The build steps follow upstream's release.yml.
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Upstream tag to build (blank for the latest release)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: new upstream release?
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.pick.outputs.tag }}
+      build: ${{ steps.pick.outputs.build }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WANTED: ${{ inputs.tag }}
+        run: |
+          tag="${WANTED:-$(gh release view --repo crmne/zapfast --json tagName --jq .tagName)}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "$tag is already built."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+      # GitHub turns off scheduled workflows in a public repository after 60
+      # days without activity, so a quiet upstream must not stop this one.
+      - name: Keep the schedule alive
+        run: |
+          last=$(git log -1 --format=%ct)
+          if [ $(( $(date +%s) - last )) -gt $(( 45 * 86400 )) ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit --allow-empty -m "Keep the build schedule alive"
+            git push
+          fi
+
+  build:
+    name: build (x86_64-pc-windows-msvc)
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: windows-latest
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      TARGET: x86_64-pc-windows-msvc
+      CARGO_TERM_COLOR: always
+      # Optional: your own Giphy key for the GIF picker. Without it the
+      # picker asks for one, as upstream's keyless builds do.
+      ZAPFAST_GIPHY_KEY: ${{ secrets.ZAPFAST_GIPHY_KEY }}
+    defaults:
+      run:
+        working-directory: zapfast
+    steps:
+      # The patches are LF; keep the upstream checkout LF too.
+      - run: git config --global core.autocrlf false
+        working-directory: .
+      - uses: actions/checkout@v7
+        with:
+          path: fork
+      - uses: actions/checkout@v7
+        with:
+          repository: crmne/zapfast
+          ref: ${{ needs.check.outputs.tag }}
+          path: zapfast
+      - name: Apply the patches
+        shell: bash
+        run: |
+          git apply --verbose ../fork/patches/*.patch
+          cp ../fork/update-public-key.hex assets/update-public-key.hex
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          test "$TAG" = "v$version"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      # Upstream pins its toolchain; add the target to the pinned one.
+      - run: rustup target add $env:TARGET
+      - run: cargo build --locked --release --target $env:TARGET
+
+      - name: Package
+        shell: bash
+        run: |
+          name="zapfast-${TAG}-${TARGET}"
+          mkdir -p "dist/$name"
+          cp "target/${TARGET}/release/zapfast.exe" "dist/$name/"
+          cp README.md LICENSE THIRD-PARTY-NOTICES.md packaging/zapfast-portable.txt "dist/$name/"
+          cd dist
+          7z a "$name.zip" "$name"
+
+      - name: Installer
+        shell: pwsh
+        run: |
+          $version = $env:TAG.TrimStart("v")
+          $arch = $env:TARGET.Split("-")[0]
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          $numericVersion = $version.Split("-")[0]
+          & $iscc "/DVersion=$version" "/DNumericVersion=$numericVersion" "/DArch=$arch" `
+            "/DBinary=$PWD\target\$env:TARGET\release\zapfast.exe" `
+            "/DOutputDir=$PWD\dist" packaging\windows\zapfast.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+      - name: Windows Installer package
+        shell: pwsh
+        run: |
+          gem install native-packages --version 0.10.0 --no-document
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.Util.wixext/5.0.2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:Path += ";$env:USERPROFILE\.dotnet\tools"
+          $payload = "dist\windows-input-$env:TARGET"
+          New-Item -ItemType Directory -Force $payload | Out-Null
+          Copy-Item "target\$env:TARGET\release\zapfast.exe", README.md, LICENSE, THIRD-PARTY-NOTICES.md, `
+            packaging\windows\zapfast-installer.txt $payload
+          $version = $env:TAG.TrimStart("v")
+          native-packages build --version $version --target windows-amd64 `
+            --defer-recipes --output "$env:RUNNER_TEMP\windows-packages"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item "$env:RUNNER_TEMP\windows-packages\packages\windows-amd64\msi\*.msi" dist\
+          Remove-Item -Recurse $payload
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-x64
+          path: |
+            zapfast/dist/*.zip
+            zapfast/dist/*-setup.exe
+            zapfast/dist/*.msi
+          if-no-files-found: error
+
+  publish:
+    name: GitHub release
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+      - name: Sign update manifest
+        uses: crmne/native-packages/.github/actions/sign-release@226fb48cb375c7cb309a3e642c7228a6e00e9ebf # v0.10.0
+        with:
+          directory: dist
+          public-key: update-public-key.hex
+          key-env: ZAPFAST_UPDATE_SIGNING_KEY
+        env:
+          ZAPFAST_UPDATE_SIGNING_KEY: ${{ secrets.ZAPFAST_UPDATE_SIGNING_KEY }}
+      # Upstream's notes, minus its download links, which lead to unpatched
+      # builds.
+      - name: Release notes
+        run: |
+          {
+            echo "Patched build of [ZapFast $TAG](https://github.com/crmne/zapfast/releases/tag/$TAG) for Windows x64. Read ticks show even with your account's read receipts off, and updates come from this repository. Everything else is upstream's."
+            echo
+            gh release view "$TAG" --repo crmne/zapfast --json body --jq .body \
+              | grep -v -e '^\*\*Download ZapFast:\*\*' -e '^On a Mac'
+          } > notes.md
+      - name: Publish
+        run: |
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
+            --title "ZapFast $TAG (patched)" --notes-file notes.md --target "$GITHUB_SHA"
