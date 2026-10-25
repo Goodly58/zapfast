@@ -1,0 +1,69 @@
+name: Check patches
+
+# Applies patches/ to an upstream ref and type-checks the result on Linux with
+# a dependency cache: feedback on a patch change in minutes, not a full
+# Windows build. Runs on every push that touches a patch.
+
+on:
+  push:
+    paths: ["patches/**", ".github/workflows/check.yml"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Upstream ref to check against (blank for the latest release)
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: cargo check (${{ matrix.upstream }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # The release users get, and upstream's newest code, so a patch that
+        # will break on the next release shows up before it does.
+        upstream: [release, main]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: fork
+      - id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WANTED: ${{ inputs.ref }}
+        run: |
+          if [ -n "$WANTED" ]; then ref="$WANTED"
+          elif [ "${{ matrix.upstream }}" = main ]; then ref=main
+          else ref=$(gh release view --repo crmne/zapfast --json tagName --jq .tagName)
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: crmne/zapfast
+          ref: ${{ steps.ref.outputs.ref }}
+          path: zapfast
+      - name: Apply the patches
+        working-directory: zapfast
+        run: |
+          git apply --verbose ../fork/patches/*.patch
+          cp ../fork/update-public-key.hex assets/update-public-key.hex
+      - name: GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev libpipewire-0.3-dev clang libclang-dev cmake perl
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: zapfast
+          key: ${{ matrix.upstream }}
+      - name: cargo check
+        working-directory: zapfast
+        run: cargo check --locked --message-format short
