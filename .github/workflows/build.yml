@@ -188,16 +188,11 @@ jobs:
           key-env: ZAPFAST_UPDATE_SIGNING_KEY
         env:
           ZAPFAST_UPDATE_SIGNING_KEY: ${{ secrets.ZAPFAST_UPDATE_SIGNING_KEY }}
-      # Upstream's notes, minus its download links, which lead to unpatched
-      # builds.
+      # A link to upstream's notes, never a copy: their @mentions would
+      # notify upstream's contributors from this repository.
       - name: Release notes
         run: |
-          {
-            echo "Patched build of [ZapFast $TAG](https://github.com/crmne/zapfast/releases/tag/$TAG) for Windows x64. Read ticks show even with your account's read receipts off, and updates come from this repository. Everything else is upstream's."
-            echo
-            gh release view "$TAG" --repo crmne/zapfast --json body --jq .body \
-              | grep -v -e '^\*\*Download ZapFast:\*\*' -e '^On a Mac'
-          } > notes.md
+          echo "[ZapFast $TAG](https://github.com/crmne/zapfast/releases/tag/$TAG) for Windows x64, with [these patches](https://github.com/$GITHUB_REPOSITORY#readme)." > notes.md
       # A rebuild replaces the release and its tag. The version stays the
       # same, so installed copies take it by hand, not through the updater.
       - name: Publish
