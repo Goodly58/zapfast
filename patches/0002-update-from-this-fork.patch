@@ -15,7 +15,7 @@ index b6367d9..4c142b7 100644
 +    additional_publisher_keys: &[],
      ..UpdateConfig::new(
 -        "crmne/zapfast",
-+        "Goodly58/zapfast",
++        "Goodly58/zapfastX",
          "ZapFast",
          "zapfast",
          env!("CARGO_PKG_VERSION"),
