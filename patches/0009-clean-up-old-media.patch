@@ -1,0 +1,242 @@
+diff --git a/src/app.rs b/src/app.rs
+index 23b3bf3..3d1e166 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -9056,6 +9056,8 @@ impl App {
+             self.window_focused = false;
+         }
+         self.report_presence();
++        // Patched build: the backends read this before cleaning up media.
++        crate::media_cleanup::set_enabled(self.settings.clean_old_media);
+         self.handle_power();
+         self.handle_tray();
+         #[cfg(target_os = "macos")]
+diff --git a/src/backend/worker.rs b/src/backend/worker.rs
+index 9b15737..f5b0b2a 100644
+--- a/src/backend/worker.rs
++++ b/src/backend/worker.rs
+@@ -906,6 +906,12 @@ pub async fn run(
+                         worker.send_text(item.chat, item.text, None, item.mentions);
+                     }
+                 }
++                // Patched build: once a day, clean up media downloaded more
++                // than three months ago, when Settings asks for it.
++                let media = worker.dirs.media_cache_dir();
++                if crate::media_cleanup::due(&media) {
++                    crate::media_cleanup::sweep(&worker.archive, &media);
++                }
+                 worker.reveal_unconfirmed_after_grace();
+                 worker.settle_presence();
+                 worker.refresh_legacy_preferences();
+@@ -2134,8 +2140,21 @@ impl Worker {
+     fn measure_storage(&mut self, token: u64, clear: bool) {
+         let dir = self.dirs.media_cache_dir();
+         let commands = self.commands.clone();
++        // Patched build: Clear keeps media of messages deleted for everyone.
++        let keep = if clear {
++            crate::media_cleanup::protected(&self.archive)
++        } else {
++            Default::default()
++        };
+         tokio::task::spawn_blocking(move || {
+-            if clear && clear_media(&dir).is_err() {
++            let cleared = || {
++                if keep.is_empty() {
++                    clear_media(&dir)
++                } else {
++                    crate::media_cleanup::clear_except(&dir, &keep)
++                }
++            };
++            if clear && cleared().is_err() {
+                 log::warn!("could not delete every cached attachment");
+             }
+             let stats = match measure_media(&dir) {
+diff --git a/src/lib.rs b/src/lib.rs
+index c669eae..d401b3b 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -32,6 +32,7 @@ pub mod kept_revokes;
+ #[cfg(target_os = "macos")]
+ pub mod macos;
+ pub mod markup;
++pub mod media_cleanup;
+ pub mod media_pause;
+ pub mod mentions;
+ pub mod model;
+diff --git a/src/media_cleanup.rs b/src/media_cleanup.rs
+new file mode 100644
+index 0000000..5af1026
+--- /dev/null
++++ b/src/media_cleanup.rs
+@@ -0,0 +1,130 @@
++//! Patched build: keeps the media cache from growing without end, and keeps
++//! what others deleted for everyone through every clean-up.
++//!
++//! With Settings > Files > "Clean up old media" on, each account's backend
++//! deletes, once a day, the attachments it downloaded more than three months
++//! ago, and forgets their paths so they download again when scrolled to.
++//! Only files inside the account's media cache are touched, never a download
++//! folder the reader chose, and never media [`crate::kept_revokes`] holds:
++//! its sender deleted it, so it could not be downloaded again. The Clear
++//! button in Settings keeps that media too.
++
++use std::collections::{HashMap, HashSet};
++use std::io;
++use std::path::{Path, PathBuf};
++use std::sync::atomic::{AtomicBool, Ordering};
++use std::sync::{Mutex, OnceLock, PoisonError};
++use std::time::{Duration, Instant, SystemTime};
++
++use crate::archive::Archive;
++
++/// Attachments downloaded longer ago than this are cleaned up.
++const MAX_AGE: Duration = Duration::from_secs(90 * 24 * 60 * 60);
++/// How often each account's cache is swept.
++const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
++
++static ENABLED: AtomicBool = AtomicBool::new(false);
++
++/// Follows the setting; the interface calls this every frame.
++pub fn set_enabled(enabled: bool) {
++    ENABLED.store(enabled, Ordering::Relaxed);
++}
++
++/// Whether the cache in `dir` is due a sweep: the setting is on and the last
++/// sweep, if any in this run, was a day ago.
++pub fn due(dir: &Path) -> bool {
++    if !ENABLED.load(Ordering::Relaxed) {
++        return false;
++    }
++    static LAST: OnceLock<Mutex<HashMap<PathBuf, Instant>>> = OnceLock::new();
++    let mut last = LAST
++        .get_or_init(Default::default)
++        .lock()
++        .unwrap_or_else(PoisonError::into_inner);
++    if last.get(dir).is_some_and(|at| at.elapsed() < EVERY) {
++        return false;
++    }
++    last.insert(dir.to_path_buf(), Instant::now());
++    true
++}
++
++/// Deletes attachments under `dir` downloaded more than three months ago,
++/// except media of messages deleted for everyone, and clears their paths.
++pub fn sweep(archive: &Archive, dir: &Path) {
++    let Ok(rows) = archive.media_paths() else {
++        return;
++    };
++    let Ok(dir) = std::fs::canonicalize(dir) else {
++        return;
++    };
++    let Some(cutoff) = SystemTime::now().checked_sub(MAX_AGE) else {
++        return;
++    };
++    let mut removed = 0;
++    for (chat, id, path) in rows {
++        if crate::kept_revokes::contains(&chat, &id) {
++            continue;
++        }
++        let Ok(path) = std::fs::canonicalize(&path) else {
++            continue;
++        };
++        if !path.starts_with(&dir) {
++            continue;
++        }
++        let old = std::fs::metadata(&path)
++            .and_then(|metadata| metadata.modified())
++            .is_ok_and(|modified| modified < cutoff);
++        if old && std::fs::remove_file(&path).is_ok() {
++            let _ = archive.clear_media_path(&chat, &id);
++            removed += 1;
++        }
++    }
++    if removed > 0 {
++        log::info!("cleaned up {removed} attachments older than three months");
++    }
++}
++
++/// Media files of messages deleted for everyone, which Clear must keep.
++pub fn protected(archive: &Archive) -> HashSet<PathBuf> {
++    archive
++        .media_paths()
++        .unwrap_or_default()
++        .into_iter()
++        .filter(|(chat, id, _)| crate::kept_revokes::contains(chat, id))
++        .filter_map(|(_, _, path)| std::fs::canonicalize(path).ok())
++        .collect()
++}
++
++/// Deletes the finished files under `dir` except those in `keep`, leaving
++/// the folders and any download still being written.
++pub fn clear_except(dir: &Path, keep: &HashSet<PathBuf>) -> io::Result<()> {
++    let mut failed = None;
++    let mut folders = vec![dir.to_path_buf()];
++    while let Some(folder) = folders.pop() {
++        let entries = match std::fs::read_dir(&folder) {
++            Ok(entries) => entries,
++            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
++            Err(error) => return Err(error),
++        };
++        for entry in entries {
++            let entry = entry?;
++            let metadata = entry.metadata()?;
++            let path = entry.path();
++            if metadata.is_dir() {
++                folders.push(path);
++                continue;
++            }
++            let name = entry.file_name().to_string_lossy().into_owned();
++            let staging = name.starts_with('.') && name.ends_with(".part");
++            let kept = std::fs::canonicalize(&path).is_ok_and(|path| keep.contains(&path));
++            if metadata.is_file()
++                && !staging
++                && !kept
++                && let Err(error) = std::fs::remove_file(&path)
++            {
++                failed = Some(error);
++            }
++        }
++    }
++    failed.map_or(Ok(()), Err)
++}
+diff --git a/src/settings.rs b/src/settings.rs
+index 6f53ac6..c1d69e0 100644
+--- a/src/settings.rs
++++ b/src/settings.rs
+@@ -601,6 +601,8 @@ pub struct Settings {
+     pub screen_privacy: ScreenPrivacy,
+     /// Patched build: never tell WhatsApp this window is online.
+     pub ghost_mode: bool,
++    /// Patched build: delete media downloaded more than three months ago.
++    pub clean_old_media: bool,
+ }
+ 
+ impl Default for Settings {
+@@ -660,6 +662,7 @@ impl Default for Settings {
+             window_maximized: false,
+             screen_privacy: ScreenPrivacy::default(),
+             ghost_mode: false,
++            clean_old_media: false,
+         }
+     }
+ }
+diff --git a/src/ui/settings.rs b/src/ui/settings.rs
+index 75c2990..27953a0 100644
+--- a/src/ui/settings.rs
++++ b/src/ui/settings.rs
+@@ -858,6 +858,15 @@ fn sections(app: &App) -> Vec<Section> {
+         ],
+         storage_usage,
+     );
++    // Patched build.
++    files.toggle(
++        translated(locale, "Clean up old media"),
++        translated(
++            locale,
++            "Once a day, deletes media downloaded more than 3 months ago; it downloads again if you scroll back. Media from deleted messages is always kept.",
++        ),
++        |settings| &mut settings.clean_old_media,
++    );
+     let log = app.dirs.log_file();
+     files.row(
+         translated(locale, "Log"),
