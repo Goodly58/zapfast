@@ -1,0 +1,42 @@
+diff --git a/src/backend/worker.rs b/src/backend/worker.rs
+index a019d84..9b15737 100644
+--- a/src/backend/worker.rs
++++ b/src/backend/worker.rs
+@@ -5050,6 +5050,11 @@ impl Worker {
+             log::warn!("could not store a message: {error}");
+             return;
+         }
++        // Patched build: fetch photos and voice notes as they arrive, so a
++        // later delete for everyone cannot take them.
++        if is_new && !message.from_me && crate::kept_revokes::fetch_on_arrival(&message.content) {
++            self.download(chat.clone(), message.id.clone());
++        }
+         // Only a stored message can be moved to the server's time.
+         if message.from_me && message.status == Delivery::Pending {
+             self.awaiting_ack
+diff --git a/src/kept_revokes.rs b/src/kept_revokes.rs
+index 9be23bf..c37a9ae 100644
+--- a/src/kept_revokes.rs
++++ b/src/kept_revokes.rs
+@@ -59,6 +59,21 @@ pub fn remember(archive: &Archive, chat: &str, id: &str) {
+     }
+ }
+ 
++/// Whether an incoming attachment is fetched as soon as it arrives, so a
++/// later delete for everyone cannot take it: photos and voice notes within
++/// the automatic download limit that are not on disk yet.
++pub fn fetch_on_arrival(content: &Content) -> bool {
++    match content {
++        Content::Image { media, .. }
++        | Content::Audio {
++            media,
++            voice_note: true,
++            ..
++        } => media.path.is_none() && media.is_within_download_limit(),
++        _ => false,
++    }
++}
++
+ /// Whether the sender deleted this message for everyone after it arrived.
+ pub fn contains(chat: &str, id: &str) -> bool {
+     kept()
