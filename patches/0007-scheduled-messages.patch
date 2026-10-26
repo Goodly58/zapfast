@@ -307,7 +307,7 @@ index 0000000..be3f38d
 +    }
 +}
 diff --git a/src/ui/conversation.rs b/src/ui/conversation.rs
-index 7086ebe..2b8ca6e 100644
+index 7086ebe..c69af75 100644
 --- a/src/ui/conversation.rs
 +++ b/src/ui/conversation.rs
 @@ -1460,6 +1460,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
@@ -318,7 +318,7 @@ index 7086ebe..2b8ca6e 100644
              if app.editing.is_some() {
                  edit_strip(app, ui);
              } else if let Some(reply_id) = app.reply_to.clone() {
-@@ -1873,12 +1874,16 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+@@ -1873,12 +1874,19 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                      } else {
                          Icon::Send
                      };
@@ -334,12 +334,15 @@ index 7086ebe..2b8ca6e 100644
                      }
 +                    // Patched build: right-click Send to send the text later.
 +                    if app.editing.is_none() && app.pending.is_empty() && app.reply_to.is_none() {
-+                        send.context_menu(|ui| schedule_menu(app, ui, &chat.id));
++                        // Stays open while a time is typed; choosing closes it.
++                        egui::Popup::context_menu(&send)
++                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
++                            .show(|ui| schedule_menu(app, ui, &chat.id));
 +                    }
                  });
              },
                      );
-@@ -2176,6 +2181,93 @@ fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
+@@ -2176,6 +2184,97 @@ fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
      strip_gap(ui);
  }
  
@@ -405,11 +408,15 @@ index 7086ebe..2b8ca6e 100644
 +    let mut custom = ui.data(|data| data.get_temp::<String>(id)).unwrap_or_default();
 +    let custom_at = crate::scheduled::next_at(now, &custom);
 +    ui.horizontal(|ui| {
-+        ui.add(
++        let field = ui.add(
 +            egui::TextEdit::singleline(&mut custom)
 +                .hint_text("21:30")
 +                .desired_width(56.0),
 +        );
++        // Enter in the field sends at that time, as the button does.
++        if field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
++            chosen = custom_at;
++        }
 +        let label = match custom_at {
 +            Some(at) => format!("Send {}", crate::scheduled::when_label(at)),
 +            None => "Send at a time".to_owned(),
