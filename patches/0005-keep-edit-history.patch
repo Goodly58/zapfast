@@ -128,32 +128,36 @@ index 3a4746a..20adf1d 100644
  #[cfg(target_os = "macos")]
  pub mod macos;
 diff --git a/src/ui/conversation.rs b/src/ui/conversation.rs
-index ecff592..b129a01 100644
+index ecff592..8a7ef1a 100644
 --- a/src/ui/conversation.rs
 +++ b/src/ui/conversation.rs
-@@ -5313,6 +5313,21 @@ fn footer_note(message: &Message) -> Option<&'static str> {
+@@ -5313,6 +5313,25 @@ fn footer_note(message: &Message) -> Option<&'static str> {
      }
  }
  
 +/// Patched build: the tooltip on "edited", with what the message said before.
-+fn earlier_versions(versions: &[String]) -> String {
-+    match versions {
-+        [only] => format!("Before the edit:\n{only}"),
-+        _ => {
-+            let mut text = String::from("Earlier versions, oldest first:");
-+            for version in versions {
-+                text.push_str("\n• ");
-+                text.push_str(version);
-+            }
-+            text
-+        }
++/// Each version goes through the bidi layout bubbles use, so right-to-left
++/// text keeps its word order.
++fn earlier_versions(ui: &mut egui::Ui, versions: &[String]) {
++    ui.label(match versions {
++        [_] => "Before the edit:",
++        _ => "Earlier versions, oldest first:",
++    });
++    let color = ui.visuals().text_color();
++    for version in versions {
++        let mut job = egui::text::LayoutJob::single_section(
++            version.clone(),
++            egui::TextFormat::simple(theme::regular(14.0), color),
++        );
++        job.wrap.max_width = 360.0;
++        ui.label(crate::bidi::layout_job(ui, job));
 +    }
 +}
 +
  /// Width of the message footer, including the room its marks take.
  fn footer_width(ui: &egui::Ui, message: &Message, starred: bool, pinned: bool) -> f32 {
      let font = theme::regular(11.0);
-@@ -5635,11 +5650,19 @@ fn footer(
+@@ -5635,11 +5654,19 @@ fn footer(
      }
      if let Some(edited) = edited {
          x -= edited.size().x + 4.0;
@@ -171,7 +175,7 @@ index ecff592..b129a01 100644
 +        {
 +            ui.interact(label, ui.id().with(("edited", &message.id)), Sense::hover())
 +                .on_hover_cursor(egui::CursorIcon::Help)
-+                .on_hover_text(earlier_versions(&versions));
++                .on_hover_ui(|ui| earlier_versions(ui, &versions));
 +        }
      }
      if let Some(failed) = failed {
