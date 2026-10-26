@@ -307,7 +307,7 @@ index 0000000..be3f38d
 +    }
 +}
 diff --git a/src/ui/conversation.rs b/src/ui/conversation.rs
-index 8a7ef1a..bcffdfa 100644
+index 7086ebe..2b8ca6e 100644
 --- a/src/ui/conversation.rs
 +++ b/src/ui/conversation.rs
 @@ -1460,6 +1460,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {

@@ -128,7 +128,7 @@ index 3a4746a..20adf1d 100644
  #[cfg(target_os = "macos")]
  pub mod macos;
 diff --git a/src/ui/conversation.rs b/src/ui/conversation.rs
-index ecff592..8a7ef1a 100644
+index ecff592..7086ebe 100644
 --- a/src/ui/conversation.rs
 +++ b/src/ui/conversation.rs
 @@ -5313,6 +5313,25 @@ fn footer_note(message: &Message) -> Option<&'static str> {
@@ -157,7 +157,7 @@ index ecff592..8a7ef1a 100644
  /// Width of the message footer, including the room its marks take.
  fn footer_width(ui: &egui::Ui, message: &Message, starred: bool, pinned: bool) -> f32 {
      let font = theme::regular(11.0);
-@@ -5635,11 +5654,19 @@ fn footer(
+@@ -5635,11 +5654,23 @@ fn footer(
      }
      if let Some(edited) = edited {
          x -= edited.size().x + 4.0;
@@ -173,9 +173,13 @@ index ecff592..8a7ef1a 100644
 +        if message.edited
 +            && let Some(versions) = crate::kept_edits::versions(&message.chat, &message.id)
 +        {
-+            ui.interact(label, ui.id().with(("edited", &message.id)), Sense::hover())
-+                .on_hover_cursor(egui::CursorIcon::Help)
-+                .on_hover_ui(|ui| earlier_versions(ui, &versions));
++            let response = ui
++                .interact(label, ui.id().with(("edited", &message.id)), Sense::hover())
++                .on_hover_cursor(egui::CursorIcon::Help);
++            // Opens at once, without the usual tooltip delay.
++            if response.hovered() {
++                response.show_tooltip_ui(|ui| earlier_versions(ui, &versions));
++            }
 +        }
      }
      if let Some(failed) = failed {
