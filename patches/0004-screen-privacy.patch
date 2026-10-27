@@ -403,7 +403,7 @@ index aec3bb0..be70dbb 100644
          app.actions.push(Action::OpenChat(chat.id.clone()));
      }
 diff --git a/src/ui/conversation.rs b/src/ui/conversation.rs
-index 527d65a..ecff592 100644
+index 527d65a..a7925b0 100644
 --- a/src/ui/conversation.rs
 +++ b/src/ui/conversation.rs
 @@ -17,6 +17,7 @@ use crate::model::{
@@ -620,6 +620,14 @@ index 527d65a..ecff592 100644
          // A row drawn outside the conversation holds still.
          animate: false,
          player: &app.player,
+@@ -10763,6 +10865,7 @@ mod tests {
+             avatars: &avatars,
+             contacts: &app.contacts,
+             now: 0,
++            screen_privacy: app.settings.screen_privacy,
+             animate: false,
+             player: &app.player,
+             voice_speed: app.settings.voice_speed,
 diff --git a/src/ui/keys.rs b/src/ui/keys.rs
 index 7efb532..c44b38f 100644
 --- a/src/ui/keys.rs
