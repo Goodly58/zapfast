@@ -1,0 +1,18 @@
+diff --git a/src/animation.rs b/src/animation.rs
+index 0b48395..dfe2e76 100644
+--- a/src/animation.rs
++++ b/src/animation.rs
+@@ -413,8 +413,11 @@ fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
+         previous = i64::from(frame.timestamp());
+         decoded.push((to_color_image(&image), Duration::from_millis(delay)));
+     }
+-    // Single-frame files use the static-image path.
+-    if decoded.len() < 2 {
++    // Patched build: callers route by the header alone, so a file that
++    // announces an animation but holds one frame, as some sticker makers
++    // write them, reaches here too. It shows as that frame instead of the
++    // placeholder.
++    if decoded.is_empty() {
+         return None;
+     }
+     decoded.truncate(limit);

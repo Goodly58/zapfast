@@ -9,6 +9,7 @@
 - **Ghost mode.** Never shows you as online (Settings → Privacy, off by default).
 - **Scheduled messages.** Right-click Send to send later. Waiting messages sit above the composer until they go.
 - **Media clean-up.** Optionally deletes media downloaded more than 3 months ago (Settings → Files, off by default). Media from deleted messages is always kept, by Clear too.
+- **Fix:** stickers marked animated that hold a single frame show as stickers instead of a blank box.
 - **Updates come from this repository**, so they keep these changes.
 
 <p align="center">
