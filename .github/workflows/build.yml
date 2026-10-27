@@ -1,7 +1,7 @@
 name: Build patched ZapFast
 
 # Every six hours: when crmne/zapfast has a release this repository has not
-# built yet, build its Windows x64 and macOS packages with patches/ applied, sign the
+# built yet, build its Windows x64 and ARM64 and macOS packages with patches/ applied, sign the
 # update manifest with this repository's key and publish them under the same
 # tag. ZapFast's own updater, patched to look here, offers it as a normal
 # update. The build steps follow upstream's release.yml.
@@ -65,13 +65,25 @@ jobs:
           fi
 
   build:
-    name: build (x86_64-pc-windows-msvc)
+    name: build (${{ matrix.target }})
     needs: check
     if: needs.check.outputs.build == 'true'
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            package: windows-amd64
+            artifact: windows-x64
+          # Cross-compiled from x64, as upstream does: the MSVC arm64 linker
+          # ships with the runner's Visual Studio.
+          - target: aarch64-pc-windows-msvc
+            package: windows-arm64
+            artifact: windows-arm64
     env:
       TAG: ${{ needs.check.outputs.tag }}
-      TARGET: x86_64-pc-windows-msvc
+      TARGET: ${{ matrix.target }}
       CARGO_TERM_COLOR: always
       # Optional: your own Giphy key for the GIF picker. Without it the
       # picker asks for one, as upstream's keyless builds do.
@@ -100,7 +112,7 @@ jobs:
           test "$TAG" = "v$version"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: ${{ matrix.target }}
       # Upstream pins its toolchain; add the target to the pinned one.
       - run: rustup target add $env:TARGET
       - run: cargo build --locked --release --target $env:TARGET
@@ -145,15 +157,15 @@ jobs:
           Copy-Item "target\$env:TARGET\release\zapfast.exe", README.md, LICENSE, THIRD-PARTY-NOTICES.md, `
             packaging\windows\zapfast-installer.txt $payload
           $version = $env:TAG.TrimStart("v")
-          native-packages build --version $version --target windows-amd64 `
+          native-packages build --version $version --target ${{ matrix.package }} `
             --defer-recipes --output "$env:RUNNER_TEMP\windows-packages"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Copy-Item "$env:RUNNER_TEMP\windows-packages\packages\windows-amd64\msi\*.msi" dist\
+          Copy-Item "$env:RUNNER_TEMP\windows-packages\packages\${{ matrix.package }}\msi\*.msi" dist\
           Remove-Item -Recurse $payload
 
       - uses: actions/upload-artifact@v7
         with:
-          name: windows-x64
+          name: ${{ matrix.artifact }}
           path: |
             zapfast/dist/*.zip
             zapfast/dist/*-setup.exe

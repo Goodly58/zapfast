@@ -29,6 +29,6 @@
 
 Everything else is upstream ZapFast. The changes are in [`patches/`](patches).
 
-**[Download the latest release](https://github.com/Goodly58/zapfastX/releases/latest)**: `.msi` for Windows, `.dmg` for Mac. The Mac app is unsigned, so open it the first time from System Settings → Privacy & Security → **Open Anyway**.
+**[Download the latest release](https://github.com/Goodly58/zapfastX/releases/latest)**: `.msi` for Windows (x64 or ARM64), `.dmg` for Mac. The Mac app is unsigned, so open it the first time from System Settings → Privacy & Security → **Open Anyway**.
 
 Unofficial build, not affiliated with ZapFast, WhatsApp or Meta. ZapFast © Carmine Paolino and contributors, [MIT](LICENSE).
