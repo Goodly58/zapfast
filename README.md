@@ -8,8 +8,6 @@
 - **Screen privacy.** Covers chats, messages, media, names and avatars until hovered (Ctrl+Shift+H, off by default). By [paulo1403](https://github.com/paulo1403) ([crmne/zapfast#451](https://github.com/crmne/zapfast/pull/451)), via [ZapFaster](https://github.com/eternalwaitt/zap-faster).
 - **Ghost mode.** Never shows you as online (Settings → Privacy, off by default).
 - **Scheduled messages.** Right-click Send to send later. Waiting messages sit above the composer until they go.
-- **Media clean-up.** Optionally deletes media downloaded more than 3 months ago (Settings → Files, off by default). Media from deleted messages is always kept, by Clear too.
-- **Fix:** stickers marked animated that hold a single frame show as stickers instead of a blank box.
 - **Updates come from this repository**, so they keep these changes.
 
 <p align="center">
@@ -27,6 +25,11 @@
 <p align="center">
   <img src="docs/updates.png" width="49%" alt="Each upstream release is patched and offered as an update">
 </p>
+
+**Also:**
+
+- Optional clean-up of media downloaded more than 3 months ago (Settings → Files, off by default). Media from deleted messages is always kept, by Clear too.
+- Stickers marked animated that hold a single frame show as stickers instead of a blank box.
 
 Everything else is upstream ZapFast. The changes are in [`patches/`](patches).
 
