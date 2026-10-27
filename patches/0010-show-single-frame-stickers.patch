@@ -17,8 +17,8 @@ index 0b48395..8777edf 100644
 -    // Single-frame files use the static-image path.
 -    if decoded.len() < 2 {
 +    // A single frame is a still for the static-image path, unless the file
-+    // announces an animation: callers route by the header alone, so such a
-+    // file never reaches that path and shows its one frame here.
++    // announces an animation: callers draw such a file only through this
++    // path, so its one frame shows here.
 +    if decoded.is_empty() || (decoded.len() < 2 && !announced) {
          return None;
      }
