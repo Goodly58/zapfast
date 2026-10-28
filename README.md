@@ -26,10 +26,7 @@
   <img src="docs/updates.png" width="49%" alt="Each upstream release is patched and offered as an update">
 </p>
 
-**Also:**
-
-- Optional clean-up of media downloaded more than 3 months ago (Settings → Files, off by default). Media from deleted messages is always kept, by Clear too.
-- Stickers marked animated that hold a single frame show as stickers instead of a blank box.
+**Also:** optional clean-up of media downloaded more than 3 months ago (Settings → Files, off by default). Media from deleted messages is always kept, by Clear too.
 
 Everything else is upstream ZapFast. The changes are in [`patches/`](patches).
 
